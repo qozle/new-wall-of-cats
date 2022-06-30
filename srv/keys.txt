@@ -1,0 +1,23 @@
+//  API key
+consumer_key = 90jlZfQqFgm1PTp8ozmxd55x3
+
+//  API key secret
+consumer_secret = G636bwplieK4dGlfM4uey92XPfggdVy6EzfyQvW6yPQJbJ3W41
+
+//  Bearer token
+AAAAAAAAAAAAAAAAAAAAAAJGeQEAAAAAg5DjLdgfYV4SE4G%2BQz%2FDbY0MCG8%3DtXLdv9YL3PmTX7mvb21Gce6nyTGcqLW2XH1eH6pugXjhi6NUN9
+
+
+
+
+
+
+//  access token
+token = 1341698998294503430-B8aenpQqH4KTjtsNybC0EXHkAgrdY2
+
+//  access token secret
+token_secret = hwoWtZoPF7UBp5DB9oIF6KSbvtKz84qAmAoSvf9uozP05
+
+
+STREAM_URL=https://api.twitter.com/2/tweets/search/stream?media.fields=url,type,media_key&expansions=attachments.media_keys
+RULES_URL=https://api.twitter.com/2/tweets/search/stream/rules

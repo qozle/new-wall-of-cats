@@ -9,7 +9,7 @@
 
 			
 		<script>
-			const ws = new WebSocket("ws://10.6.150.160:1337");
+			const ws = new WebSocket("ws://192.168.3.202:1337");
 			
 			ws.addEventListener("open", () =>{
 				console.log("We are connected");
@@ -18,6 +18,12 @@
 			
 			ws.addEventListener('message', function (event) {
 				console.log(event.data);
+			});
+
+			ws.addEventListener('test', function (event) {
+
+				let payload = JSON.parse(event);
+				console.log(payload.data);
 			});
 		</script>
 

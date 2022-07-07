@@ -21,6 +21,10 @@ const axios = require("axios").default;
 const WebSocketServer = require("ws");
 //  get env vars from env file
 require("dotenv").config();
+//  tensorflow for node
+const tf = require("@tensorflow/tfjs-node");
+//  NSFWjs for image NSFW classification ^_-
+const nsfw = require("nsfwjs");
 
 
 //  secure env vars
@@ -171,6 +175,15 @@ async function get_twitter_stream(streamURL, token) {
 }
 
 
+////////////////
+//  load NSFW model
+async function load_nsfw() {
+	const model = await nsfw.load("file://model");
+	console.log("loaded nsfw model");
+	return model;
+}
+
+
 
 /////////////////////////////
 //  M A I N  ////////////////
@@ -179,6 +192,8 @@ async function get_twitter_stream(streamURL, token) {
 
 //  enclosing everything so nothing is accessible just in case
 (() => {
+
+	const nsfw = load_nsfw();
 	//  set rules for Twitter API stream filter
 	setRules(rules, rules_url, bearer_token)
 		.then(function (response) {

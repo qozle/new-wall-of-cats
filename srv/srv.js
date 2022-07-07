@@ -22,8 +22,10 @@ const WebSocketServer = require("ws");
 //  get env vars from env file
 require("dotenv").config();
 //  tensorflow for node
-const tf = require("@tensorflow/tfjs-node");
+console.log("loading tfjs-node");
+const tf = require("@tensorflow/tfjs");
 //  NSFWjs for image NSFW classification ^_-
+console.log("loading nsfwjs");
 const nsfw = require("nsfwjs");
 
 
@@ -178,7 +180,8 @@ async function get_twitter_stream(streamURL, token) {
 ////////////////
 //  load NSFW model
 async function load_nsfw() {
-	const model = await nsfw.load("file://model");
+	console.log("pre-loading model...");
+	const model = await nsfw.load();
 	console.log("loaded nsfw model");
 	return model;
 }

@@ -22,10 +22,8 @@ const WebSocketServer = require("ws");
 //  get env vars from env file
 require("dotenv").config();
 //  tensorflow for node
-console.log("loading tfjs-node");
 const tf = require("@tensorflow/tfjs");
 //  NSFWjs for image NSFW classification ^_-
-console.log("loading nsfwjs");
 const nsfw = require("nsfwjs");
 
 
@@ -64,6 +62,27 @@ const rules = [
 //  F U N C T I O N S  L I B  //
 ////////////////////////////////
 
+////////////////////
+//  utility to handle async errors from axios
+function handle_axios_error(error) {
+	//  request was made, response received, but out of 200 range
+	if (error.respose) {
+		console.log("Response received out of 200 range =(");
+		console.log(error.status);
+		console.log(error.data);
+		
+	} else if (error.request) {
+		//  request was made but no response received
+		console.log("Request made but no response received =(");
+		console.log(error.request);
+
+	} else {
+		console.log("Bad Axios setup for request:");
+		console.log(error.message);
+	}
+}
+
+
 /////////////////
 // Function to set rules for Twitter API Stream
 async function setRules(rules, rulesURL, token) {
@@ -94,51 +113,21 @@ async function setRules(rules, rulesURL, token) {
 				}
 			}
 
-			let get_rules_promise = await axios.get(rulesURL, config)
+			let get_rules_promise = axios.get(rulesURL, config)
 				.then(function (response) {					
 				
 					console.log("Rules set successfully (rules check out).");
 					return response.data.data
 				
 				}).catch(function (error) {
-
-					//  request was made, response received, but out of 200 range
-					if (error.respose) {
-						console.log("Response received out of 200 range =(");
-						console.log(error.status);
-						console.log(error.data);
-						
-					} else if (error.request) {
-						//  request was made but no response received
-						console.log("Request made but no response received =(");
-						console.log(error.request);
-
-					} else {
-						console.log("Bad Axios setup for request:");
-						console.log(error.message);
-					}
-
+					handle_axios_error(error);
 				});
 			
 			return get_rules_promise;
 
 		})
 		.catch(function (error) {
-			//  request was made, response received, but out of 200 range
-			if (error.respose) {
-				console.log("Response received out of 200 range =(");
-				console.log(error.status);
-				console.log(error.data);
-				
-			} else if (error.request) {
-				//  request was made but no response received
-				console.log("Request made but no response received =(");
-				console.log(error.request);
-
-			} else {
-				console.log("Bad Axios setup for request:");
-				console.log(error.message);
-			}
+			handle_axios_error(error);
 		});	
 	
 	return set_rules_promise;
@@ -156,22 +145,9 @@ async function get_twitter_stream(streamURL, token) {
 		responseType: 'stream'
 	}
 
-	return await axios.get(streamURL, config)
+	return axios.get(streamURL, config)
 		.catch(function (error) {
-			if (error.respose) {
-				console.log("Stream response received out of 200 range =(");
-				console.log(error.status);
-				console.log(error.data);
-				
-			} else if (error.request) {
-				//  request was made but no response received
-				console.log("Stream request made but no response received =(");
-				console.log(error.request);
-
-			} else {
-				console.log("Bad Axios setup for stream request:");
-				console.log(error.message);
-			}
+			handle_axios_error(error);
 		});
 
 }
@@ -181,9 +157,30 @@ async function get_twitter_stream(streamURL, token) {
 //  load NSFW model
 async function load_nsfw() {
 	console.log("pre-loading model...");
-	const model = await nsfw.load();
+	const model = nsfw.load("graph_model/", {type: 'graph'});
 	console.log("loaded nsfw model");
 	return model;
+}
+
+
+///////////////
+//  test image for NSFW content
+async function is_img_safe(model, img) {
+
+	//  get image
+	const image_response = await axios.get(img, { responseType: "arraybuffer" });
+
+	//  image must be in tf.tensor3d format
+	const image_tf3d = await tf.node.decodeImage(image_response.data, 3);
+
+	//  get predictions
+	const predictions = await model.classify(image_tf3d);
+
+	//  we have to clean this up manually
+	image_tf3d.dispose();
+
+	return predictions;
+
 }
 
 
@@ -195,10 +192,12 @@ async function load_nsfw() {
 
 //  enclosing everything so nothing is accessible just in case
 (() => {
+	
+	///////////////
+	//  create server startup promises
 
-	const nsfw = load_nsfw();
-	//  set rules for Twitter API stream filter
-	setRules(rules, rules_url, bearer_token)
+	//  set and double-check rules for Twitter API stream filter
+	let setRulesPromise = setRules(rules, rules_url, bearer_token)
 		.then(function (response) {
 
 			console.log("Twitter API stream filter rules:");
@@ -206,90 +205,116 @@ async function load_nsfw() {
 			console.log("");
 		
 			//  connect to Twitter API stream
-			get_twitter_stream(stream_url, bearer_token)
-				.then(function (streamResponse) {
+			return get_twitter_stream(stream_url, bearer_token)
+				.then((streamResponse) => {
 
-					let stream = streamResponse.data;
-				
 					console.log("Successfully connected to Twitter API stream.");
 
-					//  Creating a new websocket server
-					//  this is insecure- see above commented code for WSS (WS via HTTPS)
-					const wss = new WebSocketServer.Server({ port: 1337 });
-					console.log("The WebSocket server is running on port 1337");
-				 
-					//  When a new client connects, set event listeners
-					wss.on("connection", ws => {
-
-						console.log("new client connected");
-					
-						//  assign stream event listeners
-						stream.on("data", async (data) => {
-							
-							//  parse stream data
-							try {
-								var data_json = JSON.parse(data);
-							} catch (thrown) {								
-								//  if we don't get parsable JSON back, it's prolly a heartbeat.
-								var msg_string = data.toString();
-
-								if (msg_string == "\r\n") {
-									console.log("\n*heartbeat*\n");
-								}
-
-								return;
-							}
-
-
-							///////////////////
-							//  PROCESS IMAGE / DATA
-
-							//  1)  get the image
-
-							//  2)  NSFW?
-							//  3)  Are there cats?
-							//  4)  style-transform
-
-
-
-							//  send data to client
-							ws.send(JSON.stringify({
-								type: "twitter_data",
-								data: data_json
-							}));
-	
-						});
-					
-
-						//  when the client sends us data
-						ws.on("message", data => {
-							console.log(`Client has sent us: ${data}`)
-						});
-					
-
-						//  client disconnect
-						ws.on("close", () => {
-							console.log("A client has disconnected");
-							//  have to close the twitter stream here and cleanup
-						});
-					
-
-						//  handling client connection error
-						ws.on('error', function (err) {
-							console.log("Some WS error occurred");
-							console.log(err);
-						});
-					
-					});
-
-				}).catch(function (error) {
-					console.log("there was an error");
-					console.log(error);
-				});
+					return streamResponse.data;
+				})
+				
 		})
 		.catch(function (error) {
 			console.log("There was an error...");
 			console.log(error);
 		});
+	
+	
+	//  preload model for NSFW
+	let preloadModelPromise = load_nsfw();
+
+	
+
+
+
+	//  make sure setup steps are completed, then add event listeners
+	Promise.all([setRulesPromise, preloadModelPromise])
+		.then(function (values) {
+
+			console.log("Successfully set rules and pre-loaded NSFW model.");
+
+			//  unpack values from promise returns
+			let stream = values[0].data;
+			let model = values[1];
+
+	
+
+			//  Creating a new websocket server
+			//  this is insecure- see above commented code for WSS (WS via HTTPS)
+			console.log("Starting up WebSocketServer.");
+			const wss = new WebSocketServer.Server({ port: 1337 });
+			console.log("The WebSocket server is running on port 1337.");
+
+		
+			//  When a new client connects, set event listeners
+			wss.on("connection", ws => {
+
+				console.log("new client connected");
+		
+				//  assign stream event listeners
+				stream.on("data", async (data) => {
+				
+					//  parse stream data
+					try {
+						var data_json = JSON.parse(data);
+					} catch (thrown) {
+						//  if we don't get parsable JSON back, it's prolly a heartbeat.
+						var msg_string = data.toString();
+
+						if (msg_string == "\r\n") {
+							console.log("\n*heartbeat*\n");
+						}
+
+						return;
+					}
+
+
+					///////////////////
+					//  PROCESS IMAGE / DATA
+
+					//  1)  get the image
+
+					//  2)  NSFW?
+					//  3)  Are there cats?
+					//  4)  style-transform
+
+
+
+					//  send data to client
+					ws.send(JSON.stringify({
+						type: "twitter_data",
+						data: data_json
+					}));
+
+				});
+		
+
+				//  when the client sends us data
+				ws.on("message", data => {
+					console.log(`Client has sent us: ${data}`)
+				});
+		
+
+				//  client disconnect
+				ws.on("close", () => {
+					console.log("A client has disconnected");
+					//  have to close the twitter stream here and cleanup
+				});
+		
+
+				//  handling client connection error
+				ws.on('error', function (err) {
+					console.log("Some WS error occurred");
+					console.log(err);
+				});
+		
+			});
+
+		})
+		.catch(function (error) {
+			console.log("there was an error");
+			console.log(error);
+		});
+		
 
 })();

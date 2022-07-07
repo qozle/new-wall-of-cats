@@ -53,14 +53,18 @@ const rules = [
 
 
 
+
+////////////////////////////////
+//  F U N C T I O N S  L I B  //
+////////////////////////////////
+
+/////////////////
 // Function to set rules for Twitter API Stream
 async function setRules(rules, rulesURL, token) {
 
 	console.log("Setting rules for Twitter API Stream...");
 
-	let data = {
-		add: rules
-	};
+	let data = { add: rules };
 
 	let config = {
 		headers: {
@@ -70,7 +74,7 @@ async function setRules(rules, rulesURL, token) {
 	}
 
 
-	let test = await axios.post(rulesURL, data, config)
+	let set_rules_promise = await axios.post(rulesURL, data, config)
 		.then(async function (response) {			
 			
 			console.log("Rules set");
@@ -84,10 +88,10 @@ async function setRules(rules, rulesURL, token) {
 				}
 			}
 
-			let test2 = await axios.get(rulesURL, config)
+			let get_rules_promise = await axios.get(rulesURL, config)
 				.then(function (response) {					
 				
-					console.log("Rules set successfully.");
+					console.log("Rules set successfully (rules check out).");
 					return response.data.data
 				
 				}).catch(function (error) {
@@ -110,7 +114,7 @@ async function setRules(rules, rulesURL, token) {
 
 				});
 			
-			return test2;
+			return get_rules_promise;
 
 		})
 		.catch(function (error) {
@@ -129,36 +133,24 @@ async function setRules(rules, rulesURL, token) {
 				console.log("Bad Axios setup for request:");
 				console.log(error.message);
 			}
-		});
+		});	
 	
-	
-	return test;
+	return set_rules_promise;
 };
 
 
-setRules(rules, rules_url, bearer_token)
-	.then(function (response) {
-		console.log("Everything finished OK");
-		console.log(response);
-	})
-	.catch(function (error) {
-		console.log("There was an error...");
-		console.log(error);
-	});
-
-
-
+///////////////
 //  Open twitter stream
 async function get_twitter_stream(streamURL, token) {
 	
 	let config = {
 		headers: {
 			authorization: `Bearer ${token}`,
-			compressed: true
-		}
+		},
+		responseType: 'stream'
 	}
 
-	return axios.get(streamURL, config)
+	return await axios.get(streamURL, config)
 		.catch(function (error) {
 			if (error.respose) {
 				console.log("Stream response received out of 200 range =(");
@@ -178,45 +170,108 @@ async function get_twitter_stream(streamURL, token) {
 
 }
 
-get_twitter_stream(stream_url, bearer_token)
-	.then(function (stream) {
 
-		stream.on("data", async (data) => {
-			
-			console.log(data);
+
+/////////////////////////////
+//  M A I N  ////////////////
+/////////////////////////////
+
+
+//  enclosing everything so nothing is accessible just in case
+(() => {
+	//  set rules for Twitter API stream filter
+	setRules(rules, rules_url, bearer_token)
+		.then(function (response) {
+
+			console.log("Twitter API stream filter rules:");
+			console.log(response);
+			console.log("");
+		
+			//  connect to Twitter API stream
+			get_twitter_stream(stream_url, bearer_token)
+				.then(function (streamResponse) {
+
+					let stream = streamResponse.data;
+				
+					console.log("Successfully connected to Twitter API stream.");
+
+					//  Creating a new websocket server
+					//  this is insecure- see above commented code for WSS (WS via HTTPS)
+					const wss = new WebSocketServer.Server({ port: 1337 });
+					console.log("The WebSocket server is running on port 1337");
+				 
+					//  When a new client connects, set event listeners
+					wss.on("connection", ws => {
+
+						console.log("new client connected");
+					
+						//  assign stream event listeners
+						stream.on("data", async (data) => {
+							
+							//  parse stream data
+							try {
+								var data_json = JSON.parse(data);
+							} catch (thrown) {								
+								//  if we don't get parsable JSON back, it's prolly a heartbeat.
+								var msg_string = data.toString();
+
+								if (msg_string == "\r\n") {
+									console.log("\n*heartbeat*\n");
+								}
+
+								return;
+							}
+
+
+							///////////////////
+							//  PROCESS IMAGE / DATA
+
+							//  1)  get the image
+
+							//  2)  NSFW?
+							//  3)  Are there cats?
+							//  4)  style-transform
+
+
+
+							//  send data to client
+							ws.send(JSON.stringify({
+								type: "twitter_data",
+								data: data_json
+							}));
+	
+						});
+					
+
+						//  when the client sends us data
+						ws.on("message", data => {
+							console.log(`Client has sent us: ${data}`)
+						});
+					
+
+						//  client disconnect
+						ws.on("close", () => {
+							console.log("A client has disconnected");
+							//  have to close the twitter stream here and cleanup
+						});
+					
+
+						//  handling client connection error
+						ws.on('error', function (err) {
+							console.log("Some WS error occurred");
+							console.log(err);
+						});
+					
+					});
+
+				}).catch(function (error) {
+					console.log("there was an error");
+					console.log(error);
+				});
 		})
-	}).catch(function (error) {
-		console.log("there was an error")
-		console.log(error);
-	});
+		.catch(function (error) {
+			console.log("There was an error...");
+			console.log(error);
+		});
 
-
-
-
- 
-// //   Creating a new websocket server
-// //  this is insecure- see above commented code for WSS (WS via HTTPS)
-// const wss = new WebSocketServer.Server({ port: 1337 })
- 
-// // Creating connection using websocket
-// wss.on("connection", ws => {
-// 	console.log("new client connected");
-	
-//     // sending message
-//     ws.on("message", data => {
-//         console.log(`Client has sent us: ${data}`)
-// 	});
-	
-//     // handling what to do when clients disconnects from server
-//     ws.on("close", () => {
-//         console.log("the client has disconnected");
-// 	});
-	
-//     // handling client connection error
-//     ws.onerror = function () {
-//         console.log("Some Error occurred")
-// 	}
-	
-// });
-
-// console.log("The WebSocket server is running on port 1337");
+})();

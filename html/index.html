@@ -2,12 +2,67 @@
 <html>
 	<head>
 		<meta charset="utf-8">
-		<title>NodeJS WebSocket Server</title>
+		<title>The New Wall of Cats</title>
+
+		<link href="css/bootstrap.min.css" media="all" type="text/css" rel="stylesheet">
+		<link href="css/bootstrap.rtl.min.css" media="all" type="text/css" rel="stylesheet">
+		<link href="css/styles.css" media="all" type="text/css" rel="stylesheet">
 	</head>
 	<body>
-		<h1>Hello world</h1>
+		<div class="container-fluid">
+			<div class="row g-0">
 
+				<div class="col-4" id="col_1">
+
+				</div>
+
+				<div class="col-4" id="col_2">
+					
+				</div>
+
+				<div class="col-4" id="col_3">
+					
+				</div>
+
+			</div>
 			
+			<div class="row g-0">
+
+				<div class="col-4" id="col_4">
+					
+				</div>
+	
+				<div class="col-4" id="col_5">
+					
+				</div>
+	
+				<div class="col-4" id="col_6">
+					
+				</div>
+				
+			</div>
+			
+			<div class="row g-0">
+
+				<div class="col-4" id="col_7">
+					
+				</div>
+
+				<div class="col-4" id="col_8">
+					
+				</div>
+
+				<div class="col-4" id="col_9">
+					
+				</div>
+				
+			</div>
+
+		</div>
+
+
+		<script src="js/jquery-3.6.0.js"></script>
+		<script src="js/bootstrap.bundle.min.js"></script>
 		<script>
 			const ws = new WebSocket("ws://10.6.150.160:1337");
 			
@@ -17,8 +72,19 @@
 			});
 			
 			ws.addEventListener('message', function (event) {
-				console.log(event.data);
+				
+				let json_data = JSON.parse(event.data);
+				console.log("We got some twitter data from the server =)");
+				console.log(json_data.data);
+
+				let img_src = json_data.data.includes.media[0].url;
+
+				let rdm_box = Math.floor((Math.random() * 9) + 1);
+
+				$(`#col_${rdm_box}`).empty();
+				$(`#col_${rdm_box}`).append(`<a class="cat_a" href="${img_src}"><img class="cat_pic" src="${img_src}"></a>`);
 			});
+
 		</script>
 
 	</body>

@@ -220,7 +220,18 @@ async function is_img_safe(img) {
 	//  we have to clean this up manually
 	image_tf3d.dispose();
 
-	return predictions;
+	let highest = 0;
+	let className;
+
+	predictions.forEach((prediction) => {
+		if (prediction.probability > highest) {
+			highest = prediction.probability;
+			className = prediction.className;
+		}
+	});
+
+	if (['Porn', 'Sexy', 'Hentai'].includes(className)) return false;
+	else return true;
 
 }
 
@@ -247,14 +258,35 @@ function handle_twitter_data(data) {
 	///////////////////
 	//  PROCESS IMAGE / DATA
 
-	//  1)  get the image
+	//  1)  get the image(s)
+	// let imgs = [];
 
-	//  2)  NSFW?
+	// data_json.includes.media.forEach((img) => {
+	// 	imgs.push(img.url);
+	// });
+
+
+	// //  2)  NSFW?
+	// Promise.all(imgs.map(async (img) => {
+	// 	console.log(`NSFW checking index ${ind} of imgs`);
+		
+	// 	let nsfwPromise = await is_img_safe(img);
+				
+
+
+	// 	if (!img_is_safe) {
+	// 		imgs.splice(ind, 1);
+	// 	}
+
+	// }));
+
+
 	//  3)  Are there cats?
 	//  4)  style-transform
 
 
-	// let img_src = data_json. 
+
+
 
 	
 
@@ -284,7 +316,6 @@ function start_idle_checkup(stream) {
 			//  we're idle, close the stream connection
 			console.log("We're idle, closing the Twitter API stream...");
 			stream.request.abort();
-			// console.log(source);
 			console.log("Stream closed.");
 
 			console.log("Stopping idle checker.");
@@ -347,10 +378,13 @@ Promise.all([setRulesPromise, preloadModelPromise])
 		model = values[1];
 
 		console.log(stream.status);
-		console.log(stream.headers["x-rate-limit-remaining"]);
-		console.log(stream.headers["x-rate-limit-limit"]);
 
-		console.log(source);
+		let connections_remaining = stream.headers["x-rate-limit-remaining"];
+		let connections_limit = stream.headers["x-rate-limit-limit"];
+		let connections_reset = new Date(stream.headers["x-rate-limit-reset"] * 1000);
+
+		console.log(`We have ${connections_remaining} connect attempts left of ${connections_limit} before we hit our rate limit.`);
+		console.log(`Reset is at ${connections_reset}`);
 		
 		
 		///////////////
@@ -379,7 +413,6 @@ Promise.all([setRulesPromise, preloadModelPromise])
 
 			console.log("new client connected");
 			
-			
 			let index = ws_clients.push(ws) - 1;
 
 			//  if they're the first person to join and the server's idle...
@@ -399,12 +432,10 @@ Promise.all([setRulesPromise, preloadModelPromise])
 							handle_twitter_data(data);
 						});
 
-
 					})
 					.catch((error) => {
 						handle_request_error(error);
 					});
-
 			}
 			
 	

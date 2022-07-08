@@ -64,7 +64,8 @@
 		<script src="js/jquery-3.6.0.js"></script>
 		<script src="js/bootstrap.bundle.min.js"></script>
 		<script>
-			const ws = new WebSocket("ws://10.6.150.160:1337");
+			// const ws = new WebSocket("ws://10.6.150.160:1337");
+			const ws = new WebSocket("ws://192.168.3.202:1337");
 			
 			ws.addEventListener("open", () =>{
 				console.log("We are connected");

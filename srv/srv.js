@@ -15,6 +15,14 @@
 
 "use strict";
 
+
+
+/////////////////////////////
+//  M A I N  ////////////////
+/////////////////////////////
+
+
+
 //  used for making requests
 const axios = require("axios").default;
 //  Node WS lib
@@ -25,7 +33,7 @@ require("dotenv").config();
 const spawn = require("child_process").spawn;
 
 //  tensorflow for node
-const tf = require("@tensorflow/tfjs");
+const tf = require("@tensorflow/tfjs-node");
 //  NSFWjs for image NSFW classification ^_-
 const nsfw = require("nsfwjs");
 
@@ -36,14 +44,20 @@ const stream_url = process.env.STREAM_URL;
 const rules_url = process.env.RULES_URL;
 
 
+//  global scope vars
+var ws_clients = [];
+var idle_checkup_interval;
+var is_idle = false;
+var model;
+
 
 //  rules that we're using for our twitter stream
 const rules = [
-  {
+	{
 	value:
-	  "(cat OR cats OR kitty OR kitten) has:images -is:quote -is:retweet -has:mentions",
+		"(cat OR cats OR kitty OR kitten) has:images -is:quote -is:retweet -has:mentions",
 	tag: "catRules",
-  },
+	},
 ];
 
 
@@ -67,12 +81,32 @@ const rules = [
 
 ////////////////////
 //  utility to handle async errors from axios
-function handle_axios_error(error) {
+function handle_request_error(error) {
 	//  request was made, response received, but out of 200 range
-	if (error.respose) {
-		console.log("Response received out of 200 range =(");
-		console.log(error.status);
-		console.log(error.data);
+	if (error.response) {
+
+		let resp = error.response;
+
+		
+		if (resp.status == 429) {
+			console.log("Too many requests");
+			
+			console.log(resp.headers["x-rate-limit-remaining"]);
+			console.log(resp.headers["x-rate-limit-limit"]);
+
+			let x_rate_reset = resp.headers["x-rate-limit-reset"];
+
+			let reset = new Date(x_rate_reset * 1000);
+
+			console.log(`Reset at ${reset}`);
+			console.log(reset);
+
+
+
+		}
+		console.log("\\n");
+		console.log("\ndata\n");
+
 		
 	} else if (error.request) {
 		//  request was made but no response received
@@ -88,7 +122,7 @@ function handle_axios_error(error) {
 }
 
 
-
+//////////////
 // Function to set rules for Twitter API Stream
 async function setRules(rules, rulesURL, token) {
 
@@ -125,14 +159,14 @@ async function setRules(rules, rulesURL, token) {
 					return response.data.data
 				
 				}).catch(function (error) {
-					handle_axios_error(error);
+					handle_request_error(error);
 				});
 			
 			return get_rules_promise;
 
 		})
 		.catch(function (error) {
-			handle_axios_error(error);
+			handle_request_error(error);
 		});	
 	
 	return set_rules_promise;
@@ -150,10 +184,12 @@ async function get_twitter_stream(streamURL, token) {
 		responseType: 'stream'
 	}
 
-	return axios.get(streamURL, config)
+	let stream = await axios.get(streamURL, config)
 		.catch(function (error) {
-			handle_axios_error(error);
+			handle_request_error(error);
 		});
+	
+	return stream;
 
 }
 
@@ -162,7 +198,7 @@ async function get_twitter_stream(streamURL, token) {
 //  load NSFW model
 async function load_nsfw() {
 	console.log("pre-loading model...");
-	const model = nsfw.load("graph_model/", {type: 'graph'});
+	const model = await nsfw.load("file://graph_model/", {type: 'graph'});
 	console.log("loaded nsfw model");
 	return model;
 }
@@ -170,7 +206,7 @@ async function load_nsfw() {
 
 ///////////////
 //  test image for NSFW content
-async function is_img_safe(model, img) {
+async function is_img_safe(img) {
 
 	//  get image
 	const image_response = await axios.get(img, { responseType: "arraybuffer" });
@@ -190,136 +226,222 @@ async function is_img_safe(model, img) {
 
 
 
-/////////////////////////////
-//  M A I N  ////////////////
-/////////////////////////////
+/////////////////
+//  handle Twitter API stream data
+function handle_twitter_data(data) {
+
+	/////////////////
+	//  parse stream data
+	try {
+		var data_json = JSON.parse(data);
+	} catch (thrown) {
+		//  if we don't get parsable JSON back, it's prolly a heartbeat.
+		var msg_string = data.toString();
+
+		if (msg_string == "\r\n") console.log("\n*heartbeat*\n");
+
+		return;
+	}
 
 
-//  enclosing everything so nothing is accessible just in case
-(() => {
+	///////////////////
+	//  PROCESS IMAGE / DATA
+
+	//  1)  get the image
+
+	//  2)  NSFW?
+	//  3)  Are there cats?
+	//  4)  style-transform
+
+
+	// let img_src = data_json. 
+
 	
-	///////////////
-	//  create server startup promises
 
-	//  set and double-check rules for Twitter API stream filter
-	let setRulesPromise = setRules(rules, rules_url, bearer_token)
-		.then(function (response) {
 
-			console.log("Twitter API stream filter rules:");
-			console.log(response);
-			console.log("");
+
+
+	//  send data to client(s)
+	ws_clients.forEach((client) => {
 		
-			//  connect to Twitter API stream
-			return get_twitter_stream(stream_url, bearer_token)
-				.then((streamResponse) => {
+		client.send(JSON.stringify({
+			type: "twitter_data",
+			data: data_json
+		}));
 
-					console.log("Successfully connected to Twitter API stream.");
+	});
+}
 
-					return streamResponse.data;
-				})
-				
-		})
-		.catch(function (error) {
-			console.log("There was an error...");
-			console.log(error);
+
+////////////
+//  start idle checkup interval
+function start_idle_checkup(stream) {
+
+	idle_checkup_interval = setInterval(function (source) {
+
+		if (is_idle) {
+
+			//  we're idle, close the stream connection
+			console.log("We're idle, closing the Twitter API stream...");
+			stream.request.abort();
+			// console.log(source);
+			console.log("Stream closed.");
+
+			console.log("Stopping idle checker.");
+			clearInterval(idle_checkup_interval);
+
+		} else {
+
+			if (!ws_clients.length) {
+				console.log("hmm, no one's around...setting is_idle to true...");
+				//  if we have no clients, then the next pass (3m), we'll catch that we're idle and close the stream.
+				is_idle = true;
+			}
+
+		}
+
+	}, 180000, stream);
+}
+
+
+
+
+///////////////
+//  create server startup promises
+
+//  set and double-check rules for Twitter API stream filter
+let setRulesPromise = setRules(rules, rules_url, bearer_token)
+	.then(function (response) {
+
+		console.log("Twitter API stream filter rules:");
+		console.log(response);
+		console.log("");
+	
+		//  connect to Twitter API stream
+		return get_twitter_stream(stream_url, bearer_token)
+			.catch(error => handle_request_error(error));
+			
+	})
+	.catch(function (error) {
+		console.log("There was an error...");
+		console.log(error);
+	});
+
+
+//  preload model for NSFW
+let preloadModelPromise = load_nsfw();
+
+
+
+
+
+//  make sure setup steps are completed, then add event listeners
+Promise.all([setRulesPromise, preloadModelPromise])
+	.then(function (values) {
+
+		console.log("Successfully set rules, pre-loaded NSFW model, and connected to Twitter API filtered stream.");
+
+
+		//  unpack values from promise returns
+		var stream = values[0];
+		model = values[1];
+
+		console.log(stream.status);
+		console.log(stream.headers["x-rate-limit-remaining"]);
+		console.log(stream.headers["x-rate-limit-limit"]);
+
+		console.log(source);
+		
+		
+		///////////////
+		//  Creating a new websocket server
+		//  this is insecure- see above commented code for WSS (WS via HTTPS)
+		console.log("Starting up WebSocketServer.");
+		const wss = new WebSocketServer.Server({ port: 1337 });
+		console.log("The WebSocket server is running on port 1337.");
+
+		console.log("Starting idle checker...");
+		start_idle_checkup(stream);
+		
+
+
+
+		//////////////////
+		//  assign stream event listeners
+		stream.data.on("data", (data) => {
+			handle_twitter_data(data);
 		});
 	
+
+		///////////////////
+		//  When a new client connects, set event listeners
+		wss.on("connection", ws => {
+
+			console.log("new client connected");
+			
+			
+			let index = ws_clients.push(ws) - 1;
+
+			//  if they're the first person to join and the server's idle...
+			if (!index && is_idle) {
+
+				is_idle = false;
+
+				get_twitter_stream(stream_url, bearer_token)
+					.then((response) => {
+
+						var stream = response.stream;
+						var source = response.source;
+
+						start_idle_checkup(stream);
+
+						stream.data.on("data", (data) => {
+							handle_twitter_data(data);
+						});
+
+
+					})
+					.catch((error) => {
+						handle_request_error(error);
+					});
+
+			}
+			
 	
-	//  preload model for NSFW
-	let preloadModelPromise = load_nsfw();
 
-	
-
-
-
-	//  make sure setup steps are completed, then add event listeners
-	Promise.all([setRulesPromise, preloadModelPromise])
-		.then(function (values) {
-
-			console.log("Successfully set rules and pre-loaded NSFW model.");
-
-			//  unpack values from promise returns
-			let stream = values[0].data;
-			let model = values[1];
-
-	
-
-			//  Creating a new websocket server
-			//  this is insecure- see above commented code for WSS (WS via HTTPS)
-			console.log("Starting up WebSocketServer.");
-			const wss = new WebSocketServer.Server({ port: 1337 });
-			console.log("The WebSocket server is running on port 1337.");
-
-		
-			//  When a new client connects, set event listeners
-			wss.on("connection", ws => {
-
-				console.log("new client connected");
-		
-				//  assign stream event listeners
-				stream.on("data", async (data) => {
-				
-					//  parse stream data
-					try {
-						var data_json = JSON.parse(data);
-					} catch (thrown) {
-						//  if we don't get parsable JSON back, it's prolly a heartbeat.
-						var msg_string = data.toString();
-
-						if (msg_string == "\r\n") {
-							console.log("\n*heartbeat*\n");
-						}
-
-						return;
-					}
-
-
-					///////////////////
-					//  PROCESS IMAGE / DATA
-
-					//  1)  get the image
-
-					//  2)  NSFW?
-					//  3)  Are there cats?
-					//  4)  style-transform
-
-
-
-					//  send data to client
-					ws.send(JSON.stringify({
-						type: "twitter_data",
-						data: data_json
-					}));
-
-				});
-		
-
-				//  when the client sends us data
-				ws.on("message", data => {
-					console.log(`Client has sent us: ${data}`)
-				});
-		
-
-				//  client disconnect
-				ws.on("close", () => {
-					console.log("A client has disconnected");
-					//  have to close the twitter stream here and cleanup
-				});
-		
-
-				//  handling client connection error
-				ws.on('error', function (err) {
-					console.log("Some WS error occurred");
-					console.log(err);
-				});
-		
+			//  when the client sends us data
+			ws.on("message", data => {
+				console.log(`Client has sent us: ${data}`)
 			});
+	
 
-		})
-		.catch(function (error) {
-			console.log("there was an error");
-			console.log(error);
+			//  client disconnect
+			ws.on("close", () => {
+
+				console.log("A client has disconnected");
+
+				//  remove socket client from our list of clients
+				ws_clients.splice(index, 1);
+			});
+	
+
+			//  handling client connection error
+			ws.on('error', function (err) {
+				console.log("Some WS error occurred");
+
+				//  remove socket client from our list of clients
+				ws_clients.splice(index, 1);
+
+				console.log(err);
+			});
+	
 		});
+
+	})
+	.catch(function (error) {
+		console.log("there was an error");
+		console.log(error);
+	});
 		
 
-})();
+

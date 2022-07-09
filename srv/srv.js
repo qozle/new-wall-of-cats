@@ -36,6 +36,8 @@ const spawn = require("child_process").spawn;
 const tf = require("@tensorflow/tfjs-node");
 //  NSFWjs for image NSFW classification ^_-
 const nsfw = require("nsfwjs");
+//  multi-object detection model
+const cocoSsd = require("@tensorflow-models/coco-ssd");
 
 
 //  secure env vars
@@ -48,7 +50,8 @@ const rules_url = process.env.RULES_URL;
 var ws_clients = [];
 var idle_checkup_interval;
 var is_idle = false;
-var model;
+var nsfwModel;
+var cocoSsdModel;
 
 
 //  rules that we're using for our twitter stream
@@ -199,42 +202,102 @@ async function get_twitter_stream(streamURL, token) {
 async function load_nsfw() {
 	console.log("pre-loading model...");
 	const model = await nsfw.load("file://graph_model/", {type: 'graph'});
-	console.log("loaded nsfw model");
+	console.log("loaded nsfw model.");
 	return model;
 }
 
 
-///////////////
-//  test image for NSFW content
-async function is_img_safe(img) {
+////////////////////
+//  load cocoSsd model
+async function load_cocoSsd() {
+	console.log("pre-loading COCO-SSD model...");
+	const model = await cocoSsd.load();
+	console.log("loaded COCO-SSD model.");
+	return model;
+}
 
+
+async function decode_image(img) {
 	//  get image
+	// console.log("GETting tweet media...");
+	console.log("decoding image...");
 	const image_response = await axios.get(img, { responseType: "arraybuffer" });
 
 	//  image must be in tf.tensor3d format
+	// console.log("decoding image to tf.tensor3d...");
 	const image_tf3d = await tf.node.decodeImage(image_response.data, 3);
 
+	return { image_tf3d, img };
+}
+
+
+
+
+///////////////
+//  test image for NSFW content
+async function is_img_safe(img_obj) {
+	
+	let img = img_obj.img
+	let image_tf3d = img_obj.image_tf3d;
+
 	//  get predictions
-	const predictions = await model.classify(image_tf3d);
+	// console.log("calculating model predictions...");
+	const predictions = await nsfwModel.classify(image_tf3d);
 
 	//  we have to clean this up manually
-	image_tf3d.dispose();
-
+	// console.log("disposing of image");
+	
 	let highest = 0;
 	let className;
-
+	
 	predictions.forEach((prediction) => {
 		if (prediction.probability > highest) {
 			highest = prediction.probability;
 			className = prediction.className;
 		}
 	});
-
-	if (['Porn', 'Sexy', 'Hentai'].includes(className)) return false;
-	else return true;
+	
+	if (['Porn', 'Sexy', 'Hentai'].includes(className)) {
+		console.log("XXxx It's mainly porn, sexy, or hentai, see yuhhh xxXXX");
+		image_tf3d.dispose();
+		return false;
+		
+	} else {
+		console.log("image passed trials, good to go.");
+		return { image_tf3d, img };
+	}
 
 }
 
+
+//////////////////////
+//  determine if image actually has cats in it
+async function are_there_cats(img) {
+
+	console.log("detecting objects...");
+	const detected_objects = await cocoSsdModel.detect(img.image_tf3d);
+
+	let cat_presence = false;
+
+	detected_objects.some((obj) => {
+		if (obj.class == 'cat') {
+			cat_presence = true;
+			return cat_presence;
+			//  return cat_presence = true;
+		}
+	});
+
+	if (cat_presence) {
+		console.log("we found some cats");
+		return img;
+	} else {
+		console.log("no cats found in image =/");
+		img.image_tf3d.dispose();
+		return false;
+	}
+
+
+}
 
 
 /////////////////
@@ -258,50 +321,78 @@ function handle_twitter_data(data) {
 	///////////////////
 	//  PROCESS IMAGE / DATA
 
-	//  1)  get the image(s)
-	// let imgs = [];
-
-	// data_json.includes.media.forEach((img) => {
-	// 	imgs.push(img.url);
-	// });
-
-
-	// //  2)  NSFW?
-	// Promise.all(imgs.map(async (img) => {
-	// 	console.log(`NSFW checking index ${ind} of imgs`);
+	let decode_images_promises = [];
+	
+	data_json.includes.media.forEach((img) => {
+		decode_images_promises.push(decode_image(img.url));		
 		
-	// 	let nsfwPromise = await is_img_safe(img);
+	});
+
+	console.log(`${decode_images_promises.length} media URLs`);
+
+	//  get all decoded images
+	Promise.all(decode_images_promises)
+		.then((decoded_values) => {
+			
+			let nsfw_promises = [];
+
+			decoded_values.forEach((decoded_img) => {
+				nsfw_promises.push(is_img_safe(decoded_img));
+			});
+			//  get whether each image is SFW
+			Promise.all(nsfw_promises)
+				.then((nsfw_values) => {
+					
+					//  filter results, because async doesn't work with Array.prototype.filter
+					let sfw_images = nsfw_values.filter((img) => img);
+					
+					let cocoSsd_promises = [];
+					
+					sfw_images.forEach((img) => {
+						cocoSsd_promises.push(are_there_cats(img))
+					});
+
+
+					Promise.all(cocoSsd_promises)
+					.then((cocoSsd_values) => {
+						
+						let cat_images = cocoSsd_values.filter((img) => img);
+						
+						console.log(`${cat_images.length} useable URLs\n`);
+
+							//  dispose of tf3d objects and create array of urls
+							let cat_urls = cat_images.map((img) => {
+								img.image_tf3d.dispose();
+								return img.img;
+							});
+
+							
+							//  send data to client(s)
+							ws_clients.forEach((client) => {
+								
+								client.send(JSON.stringify({
+									type: "twitter_data",
+									data: cat_urls
+								}));
 				
+							});
 
+						}).catch((error)=>{
+							console.log("There was an error with the cocoSsd promises.");
+							console.log(error);
+						});
 
-	// 	if (!img_is_safe) {
-	// 		imgs.splice(ind, 1);
-	// 	}
+				}).catch((error)=>{
+					console.log("There was an error with the NSFW promises.");
+					console.log(error);
+				});
 
-	// }));
-
-
-	//  3)  Are there cats?
-	//  4)  style-transform
-
-
-
-
+		}).catch((error)=>{
+			console.log("There was an error with the decoding images promises.");
+			console.log(error);
+		});
 
 	
-
-
-
-
-	//  send data to client(s)
-	ws_clients.forEach((client) => {
-		
-		client.send(JSON.stringify({
-			type: "twitter_data",
-			data: data_json
-		}));
-
-	});
 }
 
 
@@ -337,8 +428,10 @@ function start_idle_checkup(stream) {
 
 
 
-///////////////
+//////////////////////////////////
 //  create server startup promises
+///////////////////////////////////
+
 
 //  set and double-check rules for Twitter API stream filter
 let setRulesPromise = setRules(rules, rules_url, bearer_token)
@@ -360,14 +453,16 @@ let setRulesPromise = setRules(rules, rules_url, bearer_token)
 
 
 //  preload model for NSFW
-let preloadModelPromise = load_nsfw();
+let preloadNsfwModelPromise = load_nsfw();
+
+let multiObjectModelPromise = load_cocoSsd();
 
 
 
 
 
 //  make sure setup steps are completed, then add event listeners
-Promise.all([setRulesPromise, preloadModelPromise])
+Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 	.then(function (values) {
 
 		console.log("Successfully set rules, pre-loaded NSFW model, and connected to Twitter API filtered stream.");
@@ -375,7 +470,8 @@ Promise.all([setRulesPromise, preloadModelPromise])
 
 		//  unpack values from promise returns
 		var stream = values[0];
-		model = values[1];
+		nsfwModel = values[1];
+		cocoSsdModel = values[2];
 
 		console.log(stream.status);
 
@@ -424,7 +520,6 @@ Promise.all([setRulesPromise, preloadModelPromise])
 					.then((response) => {
 
 						var stream = response.stream;
-						var source = response.source;
 
 						start_idle_checkup(stream);
 

@@ -13,6 +13,7 @@
     "@tensorflow/tfjs": "^3.18.0",
     "@tensorflow/tfjs-node": "^3.18.0",
     "axios": "^0.27.2",
+    "deepai": "^1.0.21",
     "dotenv": "^16.0.1",
     "nsfwjs": "^2.4.1",
     "ws": "^8.8.0"

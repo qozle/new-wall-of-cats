@@ -23,27 +23,23 @@
 
 
 
-//  used for making requests
 const axios = require("axios").default;
-//  Node WS lib
 const WebSocketServer = require("ws");
-//  get env vars from env file
 require("dotenv").config();
-//  used for spawning a child process
-const spawn = require("child_process").spawn;
-
-//  tensorflow for node
+// const spawn = require("child_process").spawn;
 const tf = require("@tensorflow/tfjs-node");
-//  NSFWjs for image NSFW classification ^_-
 const nsfw = require("nsfwjs");
-//  multi-object detection model
 const cocoSsd = require("@tensorflow-models/coco-ssd");
+const deepai = require("deepai");
+const fs = require("fs");
+
 
 
 //  secure env vars
 const bearer_token = process.env.BEARER_TOKEN;
 const stream_url = process.env.STREAM_URL;
 const rules_url = process.env.RULES_URL;
+const deepai_key = process.env.DEEPAI_API_KEY;
 
 
 //  global scope vars
@@ -63,17 +59,25 @@ const rules = [
 	},
 ];
 
+//  set API key for deepai client
+deepai.setApiKey(deepai_key);
+
+
 
 // //  FOR HTTPS SECURE WSS CONNECTION
 // const fs = require('fs');
 // const https = require('https');
 
 // const server = https.createServer({
-//   cert: fs.readFileSync("../test/fixtures/certificate.pem"),
-//   key: fs.readFileSync("../test/fixtures/key.pem"),
+//   cert: fs.readFileSync("/etc/letsencrypt/live/01014.org/certificate.pem"),
+//   key: fs.readFileSync("/etc/letsencrypt/live/01014.org/key.pem"),
+//   port: 1337
 // }, app);
 
-// const wss = new WebSocketServer({ server });
+// const wss = new WebSocketServer({ 
+// 	server: server,
+// 		port: 1337
+//  });
 
 
 
@@ -107,8 +111,13 @@ function handle_request_error(error) {
 
 
 		}
-		console.log("\\n");
-		console.log("\ndata\n");
+
+		console.log("\nGot a non 200 response from a request:")
+		console.log("\n");
+		console.log(resp.status);
+		console.log(resp.data);
+		console.log(error.request.headers);
+		console.log("\n");
 
 		
 	} else if (error.request) {
@@ -296,6 +305,64 @@ async function are_there_cats(img) {
 		return false;
 	}
 
+}
+
+
+async function transfer_style(content, style_opt = false) {
+	
+	//////////////
+	//  unless we pass a specific style image, we'll just pick from this bank
+	const styles = [
+		"imgs/painting1.jpeg",
+		"imgs/painting2.jpg",
+		"imgs/painting3.jpeg",
+		"imgs/painting4.jpg"
+	]
+
+	const random_ind = Math.floor(Math.random() * 4);
+
+	if (style_opt == false) {
+		var style_file = styles[random_ind];
+	}
+
+	var content_file = "imgs/pauline.jpg";
+
+
+	// console.log("content");
+	// console.log(content_file);
+	// console.log("style");
+	// console.log(style_file);
+
+	///////////////
+	//  stylize
+	console.log("calling style-transfer deepai API...");
+
+	let data = {
+    'content': fs.createReadStream("imgs/pauline.jpg"),
+    'style': fs.createReadStream("imgs/painting1.jpeg")
+  	};
+
+	let config = {
+		headers: {
+			'Api-Key': deepai_key,
+			'Content-Type': 'application/json'
+		}
+	};
+
+
+	var result = await axios.post("https://api.deepai.org/api/neural-style", data, config)
+		.catch(function (error) {
+			handle_request_error(error);
+		});
+
+
+	// var result = await deepai.callStandardApi("CNNMRF", {
+		// content: fs.createReadStream(content_file),
+		// style: fs.createReadStream(style_file)
+	// });
+
+
+	return result;
 
 }
 
@@ -354,28 +421,55 @@ function handle_twitter_data(data) {
 
 
 					Promise.all(cocoSsd_promises)
-					.then((cocoSsd_values) => {
+						.then((cocoSsd_values) => {
 						
-						let cat_images = cocoSsd_values.filter((img) => img);
-						
-						console.log(`${cat_images.length} useable URLs\n`);
+							let cat_images = cocoSsd_values.filter((img) => img);
+							
+							if (!cat_images.length) {
+								console.log("no useable images =/\n");
+								return;
+							}
+
+							console.log(`${cat_images.length} useable URLs\n`);
 
 							//  dispose of tf3d objects and create array of urls
 							let cat_urls = cat_images.map((img) => {
 								img.image_tf3d.dispose();
 								return img.img;
 							});
-
 							
-							//  send data to client(s)
-							ws_clients.forEach((client) => {
-								
-								client.send(JSON.stringify({
-									type: "twitter_data",
-									data: cat_urls
-								}));
-				
+							
+							//////////  S T Y L I Z E  //////////
+							let styled_image_promises = [];
+
+							cat_urls.forEach((img) => {
+								styled_image_promises.push(transfer_style(img));
 							});
+
+
+							Promise.all(styled_image_promises)
+								.then((style_values) => {
+
+									console.log("finished getting styled images");
+									console.log(style_values);
+									
+									
+									// //  send data to client(s)
+									// ws_clients.forEach((client) => {
+										
+									// 	client.send(JSON.stringify({
+									// 		type: "twitter_data",
+									// 		data: cat_urls
+									// 	}));
+						
+									// });
+
+								}).catch((error)=>{
+									console.log("There was an error with the deepAI promises.");
+									console.log(error);
+								});
+
+								
 
 						}).catch((error)=>{
 							console.log("There was an error with the cocoSsd promises.");
@@ -519,7 +613,7 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 				get_twitter_stream(stream_url, bearer_token)
 					.then((response) => {
 
-						var stream = response.stream;
+						var stream = response;
 
 						start_idle_checkup(stream);
 

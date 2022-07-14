@@ -1,18 +1,3 @@
-//  web page is served from normal web server
-
-//  socket is opened
-
-//  connect to twitter stream
-
-//  when data comes in, put it in the database
-
-//  process image (in the style of 1 of x famous painters)
-
-//  only need the 9 most recent entries in the database because they're only being used for
-//  new clients (new page loads)
-
-
-
 "use strict";
 
 
@@ -32,6 +17,7 @@ const nsfw = require("nsfwjs");
 const cocoSsd = require("@tensorflow-models/coco-ssd");
 const deepai = require("deepai");
 const fs = require("fs");
+const https = require("https");
 
 
 
@@ -61,24 +47,6 @@ const rules = [
 
 //  set API key for deepai client
 deepai.setApiKey(deepai_key);
-
-
-
-// //  FOR HTTPS SECURE WSS CONNECTION
-// const fs = require('fs');
-// const https = require('https');
-
-// const server = https.createServer({
-//   cert: fs.readFileSync("/etc/letsencrypt/live/01014.org/certificate.pem"),
-//   key: fs.readFileSync("/etc/letsencrypt/live/01014.org/key.pem"),
-//   port: 1337
-// }, app);
-
-// const wss = new WebSocketServer({ 
-// 	server: server,
-// 		port: 1337
-//  });
-
 
 
 
@@ -555,9 +523,9 @@ let multiObjectModelPromise = load_cocoSsd();
 //  make sure setup steps are completed, then add event listeners
 Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 	.then(function (values) {
-
-		console.log("Successfully set rules, pre-loaded NSFW model, and connected to Twitter API filtered stream.");
-
+		console.log(
+			"Successfully set rules, pre-loaded NSFW model, and connected to Twitter API filtered stream."
+		);
 
 		//  unpack values from promise returns
 		var stream = values[0];
@@ -568,48 +536,66 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 
 		let connections_remaining = stream.headers["x-rate-limit-remaining"];
 		let connections_limit = stream.headers["x-rate-limit-limit"];
-		let connections_reset = new Date(stream.headers["x-rate-limit-reset"] * 1000);
+		let connections_reset = new Date(
+			stream.headers["x-rate-limit-reset"] * 1000
+		);
 
-		console.log(`We have ${connections_remaining} connect attempts left of ${connections_limit} before we hit our rate limit.`);
+		console.log(
+			`We have ${connections_remaining} connect attempts left of ${connections_limit} before we hit our rate limit.`
+		);
 		console.log(`Reset is at ${connections_reset}`);
-		
-		
+
 		///////////////
 		//  Creating a new websocket server
 		//  this is insecure- see above commented code for WSS (WS via HTTPS)
-		console.log("Starting up WebSocketServer.");
-		const wss = new WebSocketServer.Server({ port: 1337 });
+
+		//  FOR HTTPS SECURE WSS CONNECTION
+		console.log("Starting up secure server and WebSocketServer.");
+
+
+
+		const server = https.createServer({
+		  cert: fs.readFileSync("/etc/letsencrypt/live/01014.org/fullchain.pem"),
+		  key: fs.readFileSync("/etc/letsencrypt/live/01014.org/privkey.pem"),
+		  port: 1337
+		});
+
+		console.log(server);
+
+		const wss = new WebSocketServer.Server({
+			server: server
+			// port: 1337
+		});
+		
+
+
+
+
+		// const wss = new WebSocketServer.Server({ port: 1337 });
 		console.log("The WebSocket server is running on port 1337.");
 
 		console.log("Starting idle checker...");
 		start_idle_checkup(stream);
-		
-
-
 
 		//////////////////
 		//  assign stream event listeners
 		stream.data.on("data", (data) => {
 			handle_twitter_data(data);
 		});
-	
 
 		///////////////////
 		//  When a new client connects, set event listeners
-		wss.on("connection", ws => {
-
+		wss.on("connection", (ws) => {
 			console.log("new client connected");
-			
+
 			let index = ws_clients.push(ws) - 1;
 
 			//  if they're the first person to join and the server's idle...
 			if (!index && is_idle) {
-
 				is_idle = false;
 
 				get_twitter_stream(stream_url, bearer_token)
 					.then((response) => {
-
 						var stream = response;
 
 						start_idle_checkup(stream);
@@ -617,33 +603,27 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 						stream.data.on("data", (data) => {
 							handle_twitter_data(data);
 						});
-
 					})
 					.catch((error) => {
 						handle_request_error(error);
 					});
 			}
-			
-	
 
 			//  when the client sends us data
-			ws.on("message", data => {
-				console.log(`Client has sent us: ${data}`)
+			ws.on("message", (data) => {
+				console.log(`Client has sent us: ${data}`);
 			});
-	
 
 			//  client disconnect
 			ws.on("close", () => {
-
 				console.log("A client has disconnected");
 
 				//  remove socket client from our list of clients
 				ws_clients.splice(index, 1);
 			});
-	
 
 			//  handling client connection error
-			ws.on('error', function (err) {
+			ws.on("error", function (err) {
 				console.log("Some WS error occurred");
 
 				//  remove socket client from our list of clients
@@ -651,9 +631,7 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 
 				console.log(err);
 			});
-	
 		});
-
 	})
 	.catch(function (error) {
 		console.log("there was an error");

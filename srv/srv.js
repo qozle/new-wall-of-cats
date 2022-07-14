@@ -107,9 +107,6 @@ function handle_request_error(error) {
 
 			console.log(`Reset at ${reset}`);
 			console.log(reset);
-
-
-
 		}
 
 		console.log("\nGot a non 200 response from a request:")
@@ -338,14 +335,14 @@ async function transfer_style(content, style_opt = false) {
 	console.log("calling style-transfer deepai API...");
 
 	let data = {
-    'content': fs.createReadStream("imgs/pauline.jpg"),
-    'style': fs.createReadStream("imgs/painting1.jpeg")
+		'content': fs.createReadStream("imgs/pauline.jpg"),
+		'style': fs.createReadStream("imgs/painting1.jpeg")
   	};
 
 	let config = {
 		headers: {
 			'Api-Key': deepai_key,
-			'Content-Type': 'application/json'
+			// 'Content-Type': 'application/json'
 		}
 	};
 
@@ -439,35 +436,35 @@ function handle_twitter_data(data) {
 							});
 							
 							
-							//////////  S T Y L I Z E  //////////
-							let styled_image_promises = [];
-
-							cat_urls.forEach((img) => {
-								styled_image_promises.push(transfer_style(img));
+							//  send data to client(s)
+							ws_clients.forEach((client) => {
+								
+								client.send(JSON.stringify({
+									type: "twitter_data",
+									data: cat_urls
+								}));
+				
 							});
+							
+							// //////////  S T Y L I Z E  //////////
+							// let styled_image_promises = [];
 
+							// cat_urls.forEach((img) => {
+							// 	styled_image_promises.push(transfer_style(img));
+							// });
 
-							Promise.all(styled_image_promises)
-								.then((style_values) => {
+							// Promise.all(styled_image_promises)
+							// 	.then((style_values) => {
 
-									console.log("finished getting styled images");
-									console.log(style_values);
+							// 		console.log("finished getting styled images");
+							// 		console.log(style_values);
 									
 									
-									// //  send data to client(s)
-									// ws_clients.forEach((client) => {
-										
-									// 	client.send(JSON.stringify({
-									// 		type: "twitter_data",
-									// 		data: cat_urls
-									// 	}));
-						
-									// });
 
-								}).catch((error)=>{
-									console.log("There was an error with the deepAI promises.");
-									console.log(error);
-								});
+							// 	}).catch((error)=>{
+							// 		console.log("There was an error with the deepAI promises.");
+							// 		console.log(error);
+							// 	});
 
 								
 

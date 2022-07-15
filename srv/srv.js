@@ -557,15 +557,22 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 		const server = https.createServer({
 		  cert: fs.readFileSync("/etc/letsencrypt/live/01014.org/fullchain.pem"),
 		  key: fs.readFileSync("/etc/letsencrypt/live/01014.org/privkey.pem"),
-		  port: 1337
 		});
 
-		console.log(server);
 
+		// var wss;
+
+		// server.listen('1337', '01014.org', () => {
+		// 	console.log('server listening on 1337');
+		// });
+		
 		const wss = new WebSocketServer.Server({
 			server: server
-			// port: 1337
 		});
+
+		// const wss = new WebSocketServer.Server({
+		// 	port: "1337",
+		// });
 		
 
 

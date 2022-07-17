@@ -31,6 +31,7 @@ const deepai_key = process.env.DEEPAI_API_KEY;
 //  global scope vars
 var ws_clients = [];
 var idle_checkup_interval;
+var keep_alive_interval = false;
 var is_idle = false;
 var nsfwModel;
 var cocoSsdModel;
@@ -455,6 +456,15 @@ function handle_twitter_data(data) {
 }
 
 
+////////////////
+//  keep-alive
+function keep_alive() {
+	return setInterval(() => { 
+		console.log("*keep-alive heartbeat*\n\n");
+	},10000)
+}
+
+
 ////////////
 //  start idle checkup interval
 function start_idle_checkup(stream) {
@@ -471,10 +481,13 @@ function start_idle_checkup(stream) {
 			console.log("Stopping idle checker.");
 			clearInterval(idle_checkup_interval);
 
+			console.log("Starting keep-alive");
+			keep_alive_interval = keep_alive();
+
 		} else {
 
 			if (!ws_clients.length) {
-				console.log("hmm, no one's around...setting is_idle to true...");
+				console.log("hmm, no one's around...setting is_idle to true...\n");
 				//  if we have no clients, then the next pass (3m), we'll catch that we're idle and close the stream.
 				is_idle = true;
 			}
@@ -554,10 +567,11 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 
 
 
-		const server = https.createServer({
-		  cert: fs.readFileSync("/etc/letsencrypt/live/01014.org/fullchain.pem"),
-		  key: fs.readFileSync("/etc/letsencrypt/live/01014.org/privkey.pem"),
-		});
+		// const server = https.createServer({
+		// 	cert: fs.readFileSync("/etc/letsencrypt/live/01014.org/fullchain.pem"),
+		// 	key: fs.readFileSync("/etc/letsencrypt/live/01014.org/privkey.pem"),
+		// 	port: 1337
+		// });
 
 
 		// var wss;
@@ -566,13 +580,13 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 		// 	console.log('server listening on 1337');
 		// });
 		
-		const wss = new WebSocketServer.Server({
-			server: server
-		});
-
 		// const wss = new WebSocketServer.Server({
-		// 	port: "1337",
+		// 	server: server
 		// });
+
+		const wss = new WebSocketServer.Server({
+			port: "1337",
+		});
 		
 
 
@@ -600,6 +614,13 @@ Promise.all([setRulesPromise, preloadNsfwModelPromise, multiObjectModelPromise])
 			//  if they're the first person to join and the server's idle...
 			if (!index && is_idle) {
 				is_idle = false;
+
+				//  close the keep_alive interval, we don't need it now
+				if (keep_alive_interval) {
+					console.log("clearing keep alive interval\n");
+					clearInterval(keep_alive_interval);
+					keep_alive_interval = false;
+				}
 
 				get_twitter_stream(stream_url, bearer_token)
 					.then((response) => {
